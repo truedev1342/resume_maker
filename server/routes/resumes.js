@@ -120,26 +120,35 @@ router.post('/generate', async (req, res) => {
     return res.status(500).json({ error: 'Resume generation failed unexpectedly.' });
   }
 
-  const id = newId('res');
-  const html = renderResumeHtml(result.resume, templateId);
-  await fsp.writeFile(path.join(GENERATED_DIR, `${id}.html`), html, 'utf8');
-  await fsp.writeFile(path.join(GENERATED_DIR, `${id}.json`), JSON.stringify(result.resume, null, 2), 'utf8');
+  // Render + persist. Guard this block: a disk hiccup here (e.g. antivirus
+  // briefly locking a freshly-written file → EPERM/EBUSY) would otherwise reject
+  // in this async handler and — under Express 4, which does not forward async
+  // errors — crash the whole server process instead of failing just this request.
+  try {
+    const id = newId('res');
+    const html = renderResumeHtml(result.resume, templateId);
+    await fsp.writeFile(path.join(GENERATED_DIR, `${id}.html`), html, 'utf8');
+    await fsp.writeFile(path.join(GENERATED_DIR, `${id}.json`), JSON.stringify(result.resume, null, 2), 'utf8');
 
-  const meta = {
-    id,
-    owner: req.session.user.username,
-    title: result.resume.name ? `${result.resume.name} — ${job.title || 'Resume'}` : job.title || 'Resume',
-    jobTitle: job.title || '',
-    company: job.company || '',
-    templateId,
-    provider: result.provider,
-    baseSource,
-    prompt: prompt ? String(prompt).slice(0, 1000) : '',
-    createdAt: new Date().toISOString(),
-  };
-  await upsert('resumes', meta);
+    const meta = {
+      id,
+      owner: req.session.user.username,
+      title: result.resume.name ? `${result.resume.name} — ${job.title || 'Resume'}` : job.title || 'Resume',
+      jobTitle: job.title || '',
+      company: job.company || '',
+      templateId,
+      provider: result.provider,
+      baseSource,
+      prompt: prompt ? String(prompt).slice(0, 1000) : '',
+      createdAt: new Date().toISOString(),
+    };
+    await upsert('resumes', meta);
 
-  res.status(201).json({ resume: meta, data: result.resume, html, provider: result.provider, warning: result.warning });
+    res.status(201).json({ resume: meta, data: result.resume, html, provider: result.provider, warning: result.warning });
+  } catch (err) {
+    console.error('[resumes/generate] save failed', err);
+    return res.status(500).json({ error: 'Generated the resume but failed to save it. Please try again.' });
+  }
 });
 
 // Save manual edits to a generated resume.

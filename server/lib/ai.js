@@ -17,6 +17,8 @@ const SYSTEM_PROMPT = `You are an expert resume writer and career coach speciali
 
 You will receive a BASE RESUME (the candidate's real background) and a TARGET JOB (title + description). Produce a tailored resume that:
 - Keeps ALL facts truthful — never invent employers, degrees, dates, or metrics that are not present or clearly implied in the base resume.
+- CRITICAL: The TARGET JOB is the role the candidate is APPLYING FOR. It is NOT part of their work history. NEVER add the target job's company, role, or responsibilities as an entry in "experience". Every entry in "experience" MUST correspond to an employer that already appears in the BASE RESUME. Do not copy responsibilities from the job description into experience bullets as if the candidate performed them.
+- For "title", write a short headline describing the candidate's own profession aligned to the target role type (e.g. "Software Engineer"). Never phrase it as a position "at" the target company, and never claim a job the candidate does not hold.
 - Reorders, rephrases, and emphasizes the candidate's real experience to match the job's keywords and requirements.
 - Mirrors important terminology from the job description (skills, tools, responsibilities) where the candidate genuinely has them, so the resume passes ATS keyword screening.
 - Writes strong, quantified, action-verb bullet points.
