@@ -81,6 +81,8 @@ export default function Dashboard() {
                     <a href={`/api/resumes/${r.id}/view`} target="_blank" rel="noreferrer">
                       Open
                     </a>
+                    {' · '}
+                    <a href={`/api/resumes/${r.id}/pdf`}>PDF</a>
                   </td>
                 </tr>
               ))}

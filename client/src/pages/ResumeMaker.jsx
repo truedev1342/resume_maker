@@ -244,10 +244,13 @@ export default function ResumeMaker() {
             </div>
             <div className="row">
               <a href={`/api/resumes/${result.resume.id}/view`} target="_blank" rel="noreferrer">
-                <button className="secondary">Open / Print → PDF</button>
+                <button className="secondary">Open / Print</button>
+              </a>
+              <a href={`/api/resumes/${result.resume.id}/pdf`}>
+                <button>Download PDF</button>
               </a>
               <a href={`/api/resumes/${result.resume.id}/download`}>
-                <button>Download</button>
+                <button className="secondary">HTML</button>
               </a>
             </div>
           </div>

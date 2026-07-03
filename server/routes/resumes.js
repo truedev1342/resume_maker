@@ -10,6 +10,7 @@ import { extractResumeText } from '../lib/resumeParser.js';
 import { generateResume } from '../lib/ai.js';
 import { renderResumeHtml } from '../templates/index.js';
 import { getSample } from '../templates/samples.js';
+import { htmlFileToPdf, pdfAvailable } from '../lib/pdf.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -202,7 +203,7 @@ router.get('/:id/view', async (req, res) => {
   res.type('html').send(await fsp.readFile(file, 'utf8'));
 });
 
-// Download the resume HTML file (open + Ctrl/Cmd-P → Save as PDF for a true PDF).
+// Download the resume HTML file (raw source / fallback).
 router.get('/:id/download', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).json({ error: 'Resume not found.' });
@@ -210,6 +211,30 @@ router.get('/:id/download', async (req, res) => {
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'File missing.' });
   const safe = (meta.title || 'resume').replace(/[^\w.\- ]+/g, '_');
   res.download(file, `${safe}.html`);
+});
+
+// Download the resume as a real PDF, rendered from the stored HTML via headless
+// Chrome/Edge. Falls back with a clear error if no browser is available.
+router.get('/:id/pdf', async (req, res) => {
+  const meta = await findResume(req);
+  if (!meta) return res.status(404).json({ error: 'Resume not found.' });
+  const file = path.join(GENERATED_DIR, `${meta.id}.html`);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'File missing.' });
+
+  try {
+    const pdf = await htmlFileToPdf(file);
+    const safe = (meta.title || 'resume').replace(/[^\w.\- ]+/g, '_');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safe}.pdf"`);
+    res.setHeader('Content-Length', pdf.length);
+    return res.end(pdf);
+  } catch (err) {
+    console.error('[resumes/pdf]', err);
+    const hint = (await pdfAvailable())
+      ? 'PDF rendering failed. Try again, or use "Download HTML" and print to PDF from your browser.'
+      : 'PDF export needs Chrome or Edge installed on the server. Use "Download HTML" and print to PDF from your browser instead.';
+    return res.status(500).json({ error: hint });
+  }
 });
 
 router.delete('/:id', async (req, res) => {
