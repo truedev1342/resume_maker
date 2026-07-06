@@ -1,7 +1,27 @@
 // Vercel serverless entry point.
-// Vercel treats every file under /api as a serverless function. We simply
-// re-export the Express app (which skips app.listen when process.env.VERCEL
-// is set) so all /api/* requests are handled by it.
-import app from '../server/index.js';
+//
+// We import the Express app *dynamically* and capture any module-load error so a
+// crash during import surfaces as a readable JSON response instead of an opaque
+// FUNCTION_INVOCATION_FAILED. (Static `import app from ...` would throw at module
+// evaluation and there'd be nothing left to report the error with.)
+const appPromise = import('../server/index.js')
+  .then((m) => m.default)
+  .catch((err) => err);
 
-export default app;
+export default async function handler(req, res) {
+  const app = await appPromise;
+  if (app instanceof Error) {
+    console.error('[boot] failed to load server app:', app);
+    res.statusCode = 500;
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        error: 'Server failed to start.',
+        message: app.message,
+        stack: (app.stack || '').split('\n').slice(0, 20),
+      })
+    );
+    return;
+  }
+  return app(req, res);
+}
