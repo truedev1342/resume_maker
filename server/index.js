@@ -80,13 +80,21 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error.' });
 });
 
-app.listen(config.port, () => {
-  const ai = aiProviderStatus();
-  console.log(`\n  Resume Maker server → http://localhost:${config.port}`);
-  console.log(`  Storage: ${STORAGE_DIR}`);
-  console.log(
-    `  AI: ${ai.anthropic ? 'Anthropic ✓' : 'Anthropic ✗'}  ${ai.openai ? 'OpenAI ✓' : 'OpenAI ✗'}` +
-      (ai.fallbackOnly ? '  (no keys → local fallback)' : '')
-  );
-  console.log(`  Logins: huy (admin), tony, phan — password: qwe123QWE!@#\n`);
-});
+// Only bind a port when running as a normal Node process (local/VPS).
+// On Vercel the app is imported by api/index.js and invoked per-request,
+// so there is no long-lived listener.
+if (!process.env.VERCEL) {
+  app.listen(config.port, () => {
+    const ai = aiProviderStatus();
+    console.log(`\n  Resume Maker server → http://localhost:${config.port}`);
+    console.log(`  Storage: ${STORAGE_DIR}`);
+    console.log(
+      `  AI: ${ai.anthropic ? 'Anthropic ✓' : 'Anthropic ✗'}  ${ai.openai ? 'OpenAI ✓' : 'OpenAI ✗'}` +
+        (ai.fallbackOnly ? '  (no keys → local fallback)' : '')
+    );
+    console.log(`  Logins: huy (admin), tony, phan — password: qwe123QWE!@#\n`);
+  });
+}
+
+// Export the Express app so Vercel's serverless runtime can use it as a handler.
+export default app;
