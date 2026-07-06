@@ -18,7 +18,7 @@ const SYSTEM_PROMPT = `You are an expert resume writer and career coach speciali
 You will receive a BASE RESUME (the candidate's real background) and a TARGET JOB (title + description). Produce a tailored resume that:
 - Keeps ALL facts truthful — never invent employers, degrees, dates, or metrics that are not present or clearly implied in the base resume.
 - CRITICAL: The TARGET JOB is the role the candidate is APPLYING FOR. It is NOT part of their work history. NEVER add the target job's company, role, or responsibilities as an entry in "experience". Every entry in "experience" MUST correspond to an employer that already appears in the BASE RESUME. Do not copy responsibilities from the job description into experience bullets as if the candidate performed them.
-- For "title", write a short headline describing the candidate's own profession aligned to the target role type, and preserve the candidate's seniority level from the base resume (e.g. "Senior Software Engineer" rather than just "Software Engineer" when the base resume shows senior-level experience). Never phrase it as a position "at" the target company, and never claim a job the candidate does not hold.
+- For "title", mirror the TARGET JOB's core title as closely as possible — use the job's own role wording (e.g. "Senior Software Engineer") so it matches what the recruiter is screening for. Strip team/department/product suffixes and location (e.g. "Senior Software Engineer, Adaptive Classification Team" becomes "Senior Software Engineer"). Preserve the candidate's seniority from the base resume: if the base resume shows senior-level experience but the job title omits it, keep the seniority (e.g. "Senior Software Engineer"); never downgrade seniority. Do NOT append editorial qualifiers like "specializing in AI-Driven Solutions", "expert in X", or any "specializing in…" phrasing — keep it to the clean job title. Never phrase it as a position "at" the target company, and never claim a job the candidate does not hold.
 - Reorders, rephrases, and emphasizes the candidate's real experience to match the job's keywords and requirements, putting the most relevant roles and bullets first.
 - Mirrors important terminology from the job description (skills, tools, responsibilities) where the candidate genuinely has them, using the job's exact wording so the resume passes ATS keyword screening.
 
@@ -127,9 +127,10 @@ function generateLocally(baseResume, job, templateId, userPrompt) {
   // Fold the user's custom instructions into the keyword pool so the local
   // fallback also reflects them (the real AI providers use them directly).
   const keywords = extractKeywords(`${job.description || ''}\n${userPrompt || ''}`);
-  const roleLine = job.title ? `${job.title}` : out.title || 'Professional';
+  const cleanTitle = cleanJobTitle(job.title);
+  const roleLine = cleanTitle || out.title || 'Professional';
 
-  out.title = job.title || out.title;
+  out.title = cleanTitle || out.title;
   out.summary =
     `${roleLine} candidate. ` +
     (out.summary ? out.summary + ' ' : '') +
@@ -147,6 +148,18 @@ function generateLocally(baseResume, job, templateId, userPrompt) {
     }
   }
   return out;
+}
+
+// Reduce a target job title to its clean core role, dropping team/department/
+// product suffixes and location so the resume headline reads like "Senior
+// Software Engineer" rather than "Senior Software Engineer, Adaptive Classification Team".
+function cleanJobTitle(title) {
+  if (!title) return '';
+  // Cut at the first comma / dash / pipe / parenthesis — everything after is
+  // typically team, product, or location context, not the role itself.
+  return String(title)
+    .split(/[,\-–—|(]/)[0]
+    .trim();
 }
 
 function parseTextResumeRough(text) {
