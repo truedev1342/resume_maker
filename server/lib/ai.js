@@ -18,7 +18,7 @@ const SYSTEM_PROMPT = `You are an expert resume writer and career coach speciali
 You will receive a BASE RESUME (the candidate's real background) and a TARGET JOB (title + description). Produce a tailored resume that:
 - Keeps ALL facts truthful — never invent employers, degrees, dates, or metrics that are not present or clearly implied in the base resume.
 - CRITICAL: The TARGET JOB is the role the candidate is APPLYING FOR. It is NOT part of their work history. NEVER add the target job's company, role, or responsibilities as an entry in "experience". Every entry in "experience" MUST correspond to an employer that already appears in the BASE RESUME. Do not copy responsibilities from the job description into experience bullets as if the candidate performed them.
-- For "title", mirror the TARGET JOB's core title as closely as possible — use the job's own role wording (e.g. "Senior Software Engineer") so it matches what the recruiter is screening for. Strip team/department/product suffixes and location (e.g. "Senior Software Engineer, Adaptive Classification Team" becomes "Senior Software Engineer"). Preserve the candidate's seniority from the base resume: if the base resume shows senior-level experience but the job title omits it, keep the seniority (e.g. "Senior Software Engineer"); never downgrade seniority. Do NOT append editorial qualifiers like "specializing in AI-Driven Solutions", "expert in X", or any "specializing in…" phrasing — keep it to the clean job title. Never phrase it as a position "at" the target company, and never claim a job the candidate does not hold.
+- For "title", mirror the TARGET JOB's core title as closely as possible — use the job's own role wording (e.g. "Senior Software Engineer") so it matches what the recruiter is screening for. Strip team/department/product suffixes and location (e.g. "Senior Software Engineer, Adaptive Classification Team" becomes "Senior Software Engineer"). ALWAYS keep the candidate at Senior level: if the target job title omits a seniority prefix (e.g. it says just "Software Engineer"), prepend "Senior" so the headline reads "Senior Software Engineer". Never output a title without the candidate's seniority and never downgrade it. Do NOT append editorial qualifiers like "specializing in AI-Driven Solutions", "expert in X", or any "specializing in…" phrasing — keep it to the clean job title. Never phrase it as a position "at" the target company, and never claim a job the candidate does not hold.
 - Reorders, rephrases, and emphasizes the candidate's real experience to match the job's keywords and requirements, putting the most relevant roles and bullets first.
 - Mirrors important terminology from the job description (skills, tools, responsibilities) where the candidate genuinely has them, using the job's exact wording so the resume passes ATS keyword screening.
 
@@ -153,13 +153,21 @@ function generateLocally(baseResume, job, templateId, userPrompt) {
 // Reduce a target job title to its clean core role, dropping team/department/
 // product suffixes and location so the resume headline reads like "Senior
 // Software Engineer" rather than "Senior Software Engineer, Adaptive Classification Team".
+// The candidate is always Senior, so ensure a seniority prefix is present.
 function cleanJobTitle(title) {
   if (!title) return '';
   // Cut at the first comma / dash / pipe / parenthesis — everything after is
   // typically team, product, or location context, not the role itself.
-  return String(title)
+  let core = String(title)
     .split(/[,\-–—|(]/)[0]
     .trim();
+  if (!core) return '';
+  // Guarantee the candidate's seniority: if the title has no seniority-level
+  // word, prepend "Senior" (e.g. "Software Engineer" -> "Senior Software Engineer").
+  if (!/\b(senior|sr\.?|staff|principal|lead|director|head|chief|vp|vice president)\b/i.test(core)) {
+    core = `Senior ${core}`;
+  }
+  return core;
 }
 
 function parseTextResumeRough(text) {
