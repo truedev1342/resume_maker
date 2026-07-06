@@ -14,10 +14,8 @@ router.post('/login', (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie('rm.sid');
-    res.json({ ok: true });
-  });
+  req.session = null; // cookie-session: clearing the session drops the cookie
+  res.json({ ok: true });
 });
 
 router.get('/me', (req, res) => {

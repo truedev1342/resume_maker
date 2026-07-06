@@ -1,12 +1,19 @@
 import { Router } from 'express';
+import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import multer from 'multer';
 import { requireAuth } from '../lib/auth.js';
-import { UPLOADS_DIR, GENERATED_DIR } from '../config.js';
-import { readCollection, writeCollection, upsert, removeById, newId } from '../lib/storage.js';
-import { extractResumeText } from '../lib/resumeParser.js';
+import {
+  readCollection,
+  upsert,
+  removeById,
+  newId,
+  writeGenerated,
+  readGenerated,
+  deleteGenerated,
+} from '../lib/storage.js';
+import { extractResumeTextFromBuffer } from '../lib/resumeParser.js';
 import { generateResume } from '../lib/ai.js';
 import { renderResumeHtml } from '../templates/index.js';
 import { getSample } from '../templates/samples.js';
@@ -15,16 +22,12 @@ import { htmlFileToPdf, pdfAvailable } from '../lib/pdf.js';
 const router = Router();
 router.use(requireAuth);
 
-// ── Uploads (sample/original resumes saved to a folder, no DB) ─────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => {
-    const safe = file.originalname.replace(/[^\w.\- ]+/g, '_').slice(0, 80);
-    cb(null, `${newId('upl')}__${safe}`);
-  },
-});
+// ── Uploads ────────────────────────────────────────────────────────────────────
+// The uploaded PDF is only needed to extract its text once, which we then store
+// on the record. So we keep the file in memory and never touch disk — this works
+// unchanged on a read-only serverless filesystem.
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
@@ -40,20 +43,18 @@ router.post('/upload', (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
     const record = {
-      id: req.file.filename.split('__')[0],
+      id: newId('upl'),
       owner: req.session.user.username,
       originalName: req.file.originalname,
-      storedName: req.file.filename,
-      path: path.join('storage', 'uploads', req.file.filename),
       size: req.file.size,
       createdAt: new Date().toISOString(),
       textExtracted: false,
       text: '',
     };
 
-    // Best-effort text extraction; keep the file even if parsing fails.
+    // Best-effort text extraction; keep the record even if parsing fails.
     try {
-      const { text, pages } = await extractResumeText(req.file.path);
+      const { text, pages } = await extractResumeTextFromBuffer(req.file.buffer);
       record.text = text;
       record.pages = pages;
       record.textExtracted = true;
@@ -81,9 +82,6 @@ router.delete('/uploads/:id', async (req, res) => {
   if (!req.session.user.isAdmin && item.owner !== req.session.user.username) {
     return res.status(403).json({ error: 'Not allowed.' });
   }
-  try {
-    await fsp.unlink(path.join(UPLOADS_DIR, item.storedName));
-  } catch {}
   await removeById('uploads', req.params.id);
   res.json({ ok: true });
 });
@@ -128,8 +126,7 @@ router.post('/generate', async (req, res) => {
   try {
     const id = newId('res');
     const html = renderResumeHtml(result.resume, templateId);
-    await fsp.writeFile(path.join(GENERATED_DIR, `${id}.html`), html, 'utf8');
-    await fsp.writeFile(path.join(GENERATED_DIR, `${id}.json`), JSON.stringify(result.resume, null, 2), 'utf8');
+    await writeGenerated(id, { html, data: result.resume });
 
     const meta = {
       id,
@@ -165,8 +162,7 @@ router.put('/:id', async (req, res) => {
   if (!resume) return res.status(400).json({ error: 'No resume data provided.' });
 
   const html = renderResumeHtml(resume, templateId);
-  await fsp.writeFile(path.join(GENERATED_DIR, `${meta.id}.html`), html, 'utf8');
-  await fsp.writeFile(path.join(GENERATED_DIR, `${meta.id}.json`), JSON.stringify(resume, null, 2), 'utf8');
+  await writeGenerated(meta.id, { html, data: resume });
   meta.templateId = templateId;
   meta.updatedAt = new Date().toISOString();
   if (resume.name) meta.title = `${resume.name} — ${meta.jobTitle || 'Resume'}`;
@@ -185,44 +181,47 @@ router.get('/', async (req, res) => {
 router.get('/:id/data', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).json({ error: 'Resume not found.' });
-  try {
-    const json = await fsp.readFile(path.join(GENERATED_DIR, `${meta.id}.json`), 'utf8');
-    const html = await fsp.readFile(path.join(GENERATED_DIR, `${meta.id}.html`), 'utf8');
-    res.json({ resume: meta, data: JSON.parse(json), html });
-  } catch {
-    res.status(404).json({ error: 'Resume files missing.' });
-  }
+  const gen = await readGenerated(meta.id);
+  if (!gen) return res.status(404).json({ error: 'Resume files missing.' });
+  res.json({ resume: meta, data: gen.data, html: gen.html });
 });
 
 // Rendered HTML (used for in-app preview and print-to-PDF).
 router.get('/:id/view', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).send('Not found');
-  const file = path.join(GENERATED_DIR, `${meta.id}.html`);
-  if (!fs.existsSync(file)) return res.status(404).send('Not found');
-  res.type('html').send(await fsp.readFile(file, 'utf8'));
+  const gen = await readGenerated(meta.id);
+  if (!gen) return res.status(404).send('Not found');
+  res.type('html').send(gen.html);
 });
 
 // Download the resume HTML file (raw source / fallback).
 router.get('/:id/download', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).json({ error: 'Resume not found.' });
-  const file = path.join(GENERATED_DIR, `${meta.id}.html`);
-  if (!fs.existsSync(file)) return res.status(404).json({ error: 'File missing.' });
+  const gen = await readGenerated(meta.id);
+  if (!gen) return res.status(404).json({ error: 'File missing.' });
   const safe = (meta.title || 'resume').replace(/[^\w.\- ]+/g, '_');
-  res.download(file, `${safe}.html`);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe}.html"`);
+  res.send(gen.html);
 });
 
 // Download the resume as a real PDF, rendered from the stored HTML via headless
-// Chrome/Edge. Falls back with a clear error if no browser is available.
+// Chrome/Edge. Falls back with a clear error if no browser is available (e.g. on
+// serverless hosts) — the client can then use "Download HTML" + browser print.
 router.get('/:id/pdf', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).json({ error: 'Resume not found.' });
-  const file = path.join(GENERATED_DIR, `${meta.id}.html`);
-  if (!fs.existsSync(file)) return res.status(404).json({ error: 'File missing.' });
+  const gen = await readGenerated(meta.id);
+  if (!gen) return res.status(404).json({ error: 'File missing.' });
 
+  // htmlFileToPdf needs a path, and Chrome can't read from Redis — stage the HTML
+  // in a temp file (os.tmpdir() is writable even on serverless).
+  const tmpFile = path.join(os.tmpdir(), `resume-${meta.id}-${newId('t')}.html`);
   try {
-    const pdf = await htmlFileToPdf(file);
+    await fsp.writeFile(tmpFile, gen.html, 'utf8');
+    const pdf = await htmlFileToPdf(tmpFile);
     const safe = (meta.title || 'resume').replace(/[^\w.\- ]+/g, '_');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${safe}.pdf"`);
@@ -232,19 +231,17 @@ router.get('/:id/pdf', async (req, res) => {
     console.error('[resumes/pdf]', err);
     const hint = (await pdfAvailable())
       ? 'PDF rendering failed. Try again, or use "Download HTML" and print to PDF from your browser.'
-      : 'PDF export needs Chrome or Edge installed on the server. Use "Download HTML" and print to PDF from your browser instead.';
+      : 'Server-side PDF export needs Chrome or Edge, which is unavailable here. Use "Download HTML" and print to PDF from your browser instead.';
     return res.status(500).json({ error: hint });
+  } finally {
+    await fsp.unlink(tmpFile).catch(() => {});
   }
 });
 
 router.delete('/:id', async (req, res) => {
   const meta = await findResume(req);
   if (!meta) return res.status(404).json({ error: 'Resume not found.' });
-  for (const ext of ['html', 'json']) {
-    try {
-      await fsp.unlink(path.join(GENERATED_DIR, `${meta.id}.${ext}`));
-    } catch {}
-  }
+  await deleteGenerated(meta.id);
   await removeById('resumes', meta.id);
   res.json({ ok: true });
 });

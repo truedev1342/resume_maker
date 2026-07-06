@@ -26,6 +26,16 @@ function loadPdfParse() {
  */
 export async function extractResumeText(filePath) {
   const buffer = await fsp.readFile(filePath);
+  return extractResumeTextFromBuffer(buffer);
+}
+
+/**
+ * Same as extractResumeText but works directly on an in-memory PDF buffer, so
+ * callers never have to write the upload to disk (required on serverless).
+ * @param {Buffer} buffer  raw PDF bytes
+ * @returns {Promise<{ text: string, pages: number, info: object }>}
+ */
+export async function extractResumeTextFromBuffer(buffer) {
   const parse = loadPdfParse();
   try {
     const data = await parse(buffer);

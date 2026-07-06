@@ -1,5 +1,5 @@
 import express from 'express';
-import session from 'express-session';
+import cookieSession from 'cookie-session';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import fs from 'node:fs';
@@ -30,18 +30,17 @@ app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// Stateless, signed-cookie sessions. The session only holds a small user object,
+// so there's no server-side store to keep in sync — this survives serverless
+// cold starts where an in-memory store would not.
 app.use(
-  session({
+  cookieSession({
     name: 'rm.sid',
-    secret: config.sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: false, // local app over http
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-    },
+    keys: [config.sessionSecret],
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.isProd, // HTTPS-only cookie in production (Vercel), plain http locally
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
   })
 );
 
